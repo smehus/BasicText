@@ -14,7 +14,7 @@ struct VertexOut {
     float2 textureCoordinate;
 };
 
-vertex VertexOut vertex_text(uint vertexID [[ vertex_id ]],
+vertex VertexOut vertex_main(uint vertexID [[ vertex_id ]],
                              constant TextVertex *vertexArray [[ buffer(17) ]],
                              constant vector_uint2 *viewportSizePointer [[buffer(18)]])
 {
@@ -35,7 +35,7 @@ vertex VertexOut vertex_text(uint vertexID [[ vertex_id ]],
     return out;
 }
 
-fragment float4 fragment_text(VertexOut vertex_in [[ stage_in ]],
+fragment float4 fragment_main(VertexOut vertex_in [[ stage_in ]],
                               texture2d<float> atlasTexture [[ texture(0) ]])
 {
     constexpr sampler s(filter::linear);

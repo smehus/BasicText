@@ -10,6 +10,27 @@ import CoreGraphics
 import MetalKit
 import CoreText
 
+//Drawing a string of text consists of at least two distinct phases.
+//First, the text layout engine determines which glyphs will be used to represent the string and how they’ll be positioned relative to one another. Then, the rendering engine is responsible for turning the abstract description of the glyphs into text on the screen.
+
+// Labels are backed by CoreText
+// Core Text is a Unicode text layout engine that integrates tightly with Quartz 2D (Core Graphics) to lay out and render text.
+
+// Text layout is unimaginably complex because of language, writing directions glyph sizes
+// I use CoreText to handle the text layout & then I'll render the glyphs with the rendering engine
+
+
+
+// Different approaches to text rendering
+
+// Dynamic Rasterization
+
+
+// Font atlases
+
+
+// Signed Distance Fields
+
 struct ValidGlyphDescriptor {
     let glyphIndex: CGGlyph
     let topLeftTexCoord: CGPoint
@@ -27,29 +48,32 @@ class ViewController: UIViewController {
     private var commandQueue: MTLCommandQueue!
     private var library: MTLLibrary!
     var device: MTLDevice!
-    
-    private var mtkMesh: MTKMesh!
-    private var mdlMesh: MDLMesh!
-    
-    var pipelineDescriptor: MTLRenderPipelineDescriptor!
+
     var pipelineState: MTLRenderPipelineState!
     
     var aspectRatio: CGFloat = 1.0
     
     // Text
     let fontNameString = "Arial"
-    let fontSize: CGFloat = 144
+    let fontSize: CGFloat = 136
     
     var glyphs: [GlyphDescriptor]!
     var atlasTexture: MTLTexture!
+    private var indexGlyphs: [(CGGlyph, CGRect)] = []
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
-
+        // MTKView part of MetalKit which includes conveniences like the draw and resize methods below. 
         let metalView = view as! MTKView
+        // The software reference to the GPU hardware device.
         self.device  = MTLCreateSystemDefaultDevice()!
+//        Responsible for creating and organizing MTLCommandBuffers
+//        each frame.
+//        A serial queue of command buffers to be executed by the device.
         self.commandQueue = device.makeCommandQueue()!
+        
+        // Contains the source code from your vertex and fragment shader functions.
         self.library = device.makeDefaultLibrary()!
         
         
@@ -61,36 +85,29 @@ class ViewController: UIViewController {
         
         metalView.delegate = self
         
-        let allocator = MTKMeshBufferAllocator(device: device)
-        mdlMesh = MDLMesh(boxWithExtent: [1, 1, 1],
-                          segments: [1, 1, 1],
-                          inwardNormals: false,
-                          geometryType: .triangles,
-                          allocator: allocator)
+        let pipelineDescriptor = MTLRenderPipelineDescriptor()
         
-        mtkMesh = try! MTKMesh(mesh: mdlMesh, device: device)
-        
-        pipelineDescriptor = MTLRenderPipelineDescriptor()
+        // Shader functions are small programs that run on the GPU
         pipelineDescriptor.vertexFunction = library.makeFunction(name: "vertex_main")
         pipelineDescriptor.fragmentFunction = library.makeFunction(name: "fragment_main")
-        pipelineDescriptor.vertexDescriptor = MTKMetalVertexDescriptorFromModelIO(mtkMesh.vertexDescriptor)
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         pipelineDescriptor.depthAttachmentPixelFormat = .depth32Float
+
+//        Sets the information for the draw, such as which shader functions to use, what depth and color settings to use and how to read the vertex data.
         pipelineState = try! device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+        
+        (atlasTexture, glyphs) = createFontAtlas()
+        createIndexedGlyphs(stringValue: "Hello WTA", font: fontNameString, fontSize: fontSize, drawableSize: metalView.drawableSize)
         
         mtkView(metalView, drawableSizeWillChange: metalView.drawableSize)
     }
     
-    func setupText() {
-        // Dynamic Rasterization
-        // strings are rasterized on the CPU, and the resulting bitmap is uploaded as a texture to the GPU for drawing
-        (atlasTexture, glyphs) = createFontAtlas()
-        
-    }
-    
     func createFontAtlas() -> (MTLTexture, [GlyphDescriptor]) {
-        // Should create largest
+        
+        // 4096 X 4096
+        // it's better to render it at as high a resolution as possible in order to capture all of the fine details.
         let atlasSize: CGFloat = 4096
+        
         let colorSpace = CGColorSpaceCreateDeviceGray()
         let bitmapInfo = CGBitmapInfo.alphaInfoMask.rawValue & CGImageAlphaInfo.none.rawValue
         let context = CGContext(data: nil,
@@ -100,6 +117,7 @@ class ViewController: UIViewController {
                                 bytesPerRow: Int(atlasSize),
                                 space: colorSpace,
                                 bitmapInfo: bitmapInfo)!
+        
         // Turn off antialiasing so we only get fully-on or fully-off pixels.
         // This implicitly disables subpixel antialiasing and hinting.
         context.setAllowsAntialiasing(false)
@@ -112,40 +130,51 @@ class ViewController: UIViewController {
         context.setFillColor(UIColor.white.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: atlasSize, height: atlasSize))
 
+        // Create core text font
         let font = UIFont(name: fontNameString, size: fontSize)!
         let ctFont = CTFontCreateWithName(font.fontName as CFString, fontSize, nil)
 
+        // Glyph(Character) count for our font 'Arial'
         let fontGlyphCount: CFIndex = CTFontGetGlyphCount(ctFont)
 
+        // Estimated margin
         let glyphMargin = CGFloat(ceilf(Float(NSString(string: "A").size(withAttributes: [.font: font]).width)))
 
         // Set fill color so that glyphs are solid white
         context.setFillColor(UIColor.black.cgColor)
-
+        
+        // Container for all our generated glyphs
         var mutableGlyphs = [GlyphDescriptor]()
 
+        // Distance from baseline to top of tallest glyph
         let fontAscent = CTFontGetAscent(ctFont)
+        // Distance from baseline to the lowest point in glyphs
         let fontDescent = CTFontGetDescent(ctFont)
-
+        
+        // Y origin for each line. The top left of each line.
         var origin = CGPoint(x: 0, y: fontAscent)
         var maxYCoordForLine: CGFloat = -1
 
+        // Iterate through all the glyphs in the font
         (0..<fontGlyphCount).forEach { (index) in
+            // The Glyph!
             var glyph: CGGlyph = UInt16(index)
+            // Rect of glyph
             let boundingRect = CTFontGetBoundingRectsForGlyphs(ctFont,
                                             CTFontOrientation.horizontal,
                                             &glyph,
                                             nil,
                                             1)
 
-            // If at the end of the line
+            // If we've reached the far right side of our atlas start a new line
             if origin.x + boundingRect.maxX + glyphMargin > atlasSize {
                 origin.x = 0
+                // Using the max y coord to find the start of the next line
                 origin.y = CGFloat(maxYCoordForLine) + glyphMargin + fontDescent
                 maxYCoordForLine = -1
             }
 
-            // Add a new line i think
+            // Getting the maximum y coord of all the glyphs for this line
             if origin.y + boundingRect.maxY > maxYCoordForLine {
                 maxYCoordForLine = origin.y + boundingRect.maxY;
             }
@@ -197,6 +226,8 @@ class ViewController: UIViewController {
 
         
         let contextImage = context.makeImage()!
+        // The texture is created by wrapping the glyphs left to right and top to bottom.
+        // Could reserve some space by using an optimal packing order
         let fontImage = UIImage(cgImage: contextImage)
         let imageData = fontImage.pngData()!
 
@@ -210,6 +241,52 @@ class ViewController: UIViewController {
             fatalError("*** error creating texture \(error.localizedDescription)")
         }
     }
+    
+    // Creating glyphs with Core text
+    func createIndexedGlyphs(stringValue: String, font: String, fontSize: CGFloat, drawableSize: CGSize) {
+        UIGraphicsBeginImageContext(CGSize(width: 1, height: 1))
+        let context = UIGraphicsGetCurrentContext()
+
+        let font = UIFont(name: font, size: fontSize)!
+        let richText = NSAttributedString(string: stringValue, attributes: [.font: font])
+
+        let frameSetter = CTFramesetterCreateWithAttributedString(richText)
+        let setterSize = CTFramesetterSuggestFrameSizeWithConstraints(frameSetter, CFRangeMake(0, 0), nil, drawableSize, nil)
+
+        let rect = CGRect(origin: CGPoint(x: -setterSize.width / 2, y: 0), size: setterSize)
+        let rectPath = CGPath(rect: rect, transform: nil)
+        let frame = CTFramesetterCreateFrame(frameSetter, CFRangeMake(0, 0), rectPath, nil)
+
+        let framePath = CTFrameGetPath(frame)
+        let frameBoundingRect = framePath.boundingBoxOfPath
+        let line: CTLine = (CTFrameGetLines(frame) as! Array<CTLine>).first!
+
+        let lineOriginBuffer = UnsafeMutablePointer<CGPoint>.allocate(capacity: 1)
+        CTFrameGetLineOrigins(frame, CFRangeMake(0, 0), lineOriginBuffer)
+
+        let run: CTRun = (CTLineGetGlyphRuns(line) as! Array<CTRun>).first!
+        let glyphBuffer = UnsafeMutablePointer<CGGlyph>.allocate(capacity: stringValue.count)
+        CTRunGetGlyphs(run, CFRangeMake(0, 0), glyphBuffer)
+
+        let glyphCount = CTRunGetGlyphCount(run)
+        let glyphPositionBuffer = UnsafeMutablePointer<CGPoint>.allocate(capacity: glyphCount)
+        CTRunGetPositions(run, CFRangeMake(0, 0), glyphPositionBuffer)
+
+        let glyphs = UnsafeMutableBufferPointer(start: glyphBuffer, count: glyphCount)
+        let positions = UnsafeMutableBufferPointer(start: glyphPositionBuffer, count: glyphCount)
+
+        for (index, (glyph, glyphOrigin)) in zip(glyphs, positions).enumerated()  {
+
+            let glyphRect = CTRunGetImageBounds(run, context, CFRangeMake(index, 1))
+            let boundsTransX = frameBoundingRect.origin.x + lineOriginBuffer.pointee.x
+            print(lineOriginBuffer.pointee)
+            let boundsTransY = frameBoundingRect.height + frameBoundingRect.origin.y - lineOriginBuffer.pointee.y + glyphOrigin.y
+            let pathTransform = CGAffineTransform(a: 1, b: 0, c: 0, d: 1, tx: boundsTransX, ty: boundsTransY)
+            let finalRect = glyphRect.applying(pathTransform)
+
+            indexGlyphs.append((glyph, finalRect))
+        }
+    }
 }
 
 extension ViewController: MTKViewDelegate {
@@ -219,277 +296,68 @@ extension ViewController: MTKViewDelegate {
     
     func draw(in view: MTKView) {
         guard let descriptor = view.currentRenderPassDescriptor else { return }
+        // This stores all the commands that you’ll ask the GPU to run.
         guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        
+        // Encodes commands for the gpu which the command buffer manages
         guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
 
-        let projection = float4x4(perspectiveProjectionFov: Float(70).degreesToRadians,
-                                  aspectRatio: Float(aspectRatio),
-                                  nearZ: 0.001,
-                                  farZ: 100.0)
-        
-        let translateMatrix = float4x4(translation: [0, 0, -2])
-        let rotateMatrix = float4x4(rotation: [0, 0, 0])
-        let scaleMatrix = float4x4(scaling: [1, 1, 1])
-        // The world moves - not the camera. So we use inverse because if we want the camera to move right - the world needs to move left.
-        let viewMatrix =  (translateMatrix * rotateMatrix * scaleMatrix).inverse
-        
-        // Model positioning
-        let translation = float4x4(translation: [0, 0, 0])
-        let rotation = float4x4(rotation: [0, 0, 0])
-        let scale = float4x4(scaling: [1, 1, 1])
-        
-        // Used to calcluate position in shader
-        var uniforms = Uniforms()
-        uniforms.modelMatrix = translation * rotation * scale
-        uniforms.viewMatrix = viewMatrix
-        uniforms.projectionMatrix = projection
-        renderEncoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.size, index: 1)
-        
+        // Render Text
         renderEncoder.setRenderPipelineState(pipelineState)
+        // Send texture to fragment shader
+        renderEncoder.setFragmentTexture(atlasTexture, index: 0)
         
-        // Aligns with stage_in in the shader file.
-        renderEncoder.setVertexBuffer(mtkMesh.vertexBuffers.first!.buffer, offset: 0, index: 0)
-        
-        let submesh = mtkMesh.submeshes.first!
-        renderEncoder.drawIndexedPrimitives(type: .triangle,
-                                            indexCount: submesh.indexCount,
-                                            indexType: submesh.indexType,
-                                            indexBuffer: submesh.indexBuffer.buffer,
-                                            indexBufferOffset: submesh.indexBuffer.offset)
+        for indexGlyph in indexGlyphs {
+
+            let idx = Int(indexGlyph.0)
+            guard glyphs.indices.contains(idx) else { continue }
+
+            let descriptor = glyphs[idx]
+            guard case let .valid(glyph) = descriptor else { continue }
+            
+            let vertices: [TextVertex]
+            
+            let vec = indexGlyph.1
+            vertices = [
+                // Top Right
+                TextVertex(position: SIMD2<Float>(vec.maxX.float, vec.maxY.float),
+                           textureCoordinate: [glyph.bottomRightTexCoord.x.float, glyph.topLeftTexCoord.y.float]),
+                // Top Left
+                TextVertex(position: SIMD2<Float>(vec.minX.float, vec.maxY.float),
+                           textureCoordinate: [glyph.topLeftTexCoord.x.float, glyph.topLeftTexCoord.y.float]),
+                // Bottom Left
+                TextVertex(position: SIMD2<Float>(vec.minX.float,  vec.minY.float),
+                           textureCoordinate: [glyph.topLeftTexCoord.x.float, glyph.bottomRightTexCoord.y.float]),
+                
+                // Top Right
+                TextVertex(position: SIMD2<Float>(vec.maxX.float, vec.maxY.float),
+                           textureCoordinate: [glyph.bottomRightTexCoord.x.float, glyph.topLeftTexCoord.y.float]),
+                // Bottom Left
+                TextVertex(position: SIMD2<Float>(vec.minX.float,  vec.minY.float),
+                           textureCoordinate: [glyph.topLeftTexCoord.x.float, glyph.bottomRightTexCoord.y.float]),
+                // Bottom Right
+                TextVertex(position: SIMD2<Float>(vec.maxX.float,  vec.minY.float),
+                           textureCoordinate: [glyph.bottomRightTexCoord.x.float, glyph.bottomRightTexCoord.y.float])
+            ]
+            
+            
+            renderEncoder.setVertexBytes(vertices, length: MemoryLayout<TextVertex>.stride * vertices.count, index: 17)
+            var viewPort = vector_uint2(x: UInt32(2436.0), y: UInt32(1125.0))
+            renderEncoder.setVertexBytes(&viewPort, length: MemoryLayout<vector_uint2>.size, index: 18)
+            
+            renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
+            
+        }
         
         renderEncoder.endEncoding()
-        
         commandBuffer.present(view.currentDrawable!)
         commandBuffer.commit()
     }
 }
 
 
-import Foundation
-
-typealias float2 = SIMD2<Float>
-typealias float3 = SIMD3<Float>
-typealias float4 = SIMD4<Float>
-
-let π = Float.pi
-
-extension Float {
-    var radiansToDegrees: Float {
-        (self / π) * 180
+extension CGFloat {
+    var float: Float {
+        return Float(self)
     }
-    var degreesToRadians: Float {
-        (self / 180) * π
-    }
-}
-
-// MARK:- float4
-extension float4x4 {
-    // MARK:- Translate
-    init(translation: float3) {
-        let matrix = float4x4(
-            [            1,             0,             0, 0],
-            [            0,             1,             0, 0],
-            [            0,             0,             1, 0],
-            [translation.x, translation.y, translation.z, 1]
-        )
-        self = matrix
-    }
-
-    // MARK:- Scale
-    init(scaling: float3) {
-        let matrix = float4x4(
-            [scaling.x,         0,         0, 0],
-            [        0, scaling.y,         0, 0],
-            [        0,         0, scaling.z, 0],
-            [        0,         0,         0, 1]
-        )
-        self = matrix
-    }
-
-    init(scaling: Float) {
-        self = matrix_identity_float4x4
-        columns.3.w = 1 / scaling
-    }
-
-    // MARK:- Rotate
-    init(rotationX angle: Float) {
-        let matrix = float4x4(
-            [1,           0,          0, 0],
-            [0,  cos(angle), sin(angle), 0],
-            [0, -sin(angle), cos(angle), 0],
-            [0,           0,          0, 1]
-        )
-        self = matrix
-    }
-
-    init(rotationY angle: Float) {
-        let matrix = float4x4(
-            [cos(angle), 0, -sin(angle), 0],
-            [         0, 1,           0, 0],
-            [sin(angle), 0,  cos(angle), 0],
-            [         0, 0,           0, 1]
-        )
-        self = matrix
-    }
-
-    init(rotationZ angle: Float) {
-        let matrix = float4x4(
-            [ cos(angle), sin(angle), 0, 0],
-            [-sin(angle), cos(angle), 0, 0],
-            [          0,          0, 1, 0],
-            [          0,          0, 0, 1]
-        )
-        self = matrix
-    }
-
-    init(rotation angle: float3) {
-        let rotationX = float4x4(rotationX: angle.x)
-        let rotationY = float4x4(rotationY: angle.y)
-        let rotationZ = float4x4(rotationZ: angle.z)
-        self = rotationX * rotationY * rotationZ
-    }
-
-    init(rotationYXZ angle: float3) {
-        let rotationX = float4x4(rotationX: angle.x)
-        let rotationY = float4x4(rotationY: angle.y)
-        let rotationZ = float4x4(rotationZ: angle.z)
-        self = rotationY * rotationX * rotationZ
-    }
-
-    // MARK:- Identity
-    static func identity() -> float4x4 {
-        matrix_identity_float4x4
-    }
-
-    // MARK:- Upper left 3x3
-    var upperLeft: float3x3 {
-        let x = columns.0.xyz
-        let y = columns.1.xyz
-        let z = columns.2.xyz
-        return float3x3(columns: (x, y, z))
-    }
-    
-    init(perspectiveProjectionFov fovRadians: Float, aspectRatio aspect: Float, nearZ: Float, farZ: Float) {
-        let yScale = 1 / tan(fovRadians * 0.5)
-        let xScale = yScale / aspect
-        let zRange = farZ - nearZ
-        let zScale = (farZ + nearZ) / zRange
-        let wzScale = -2 * farZ * nearZ / zRange
-
-        let xx = xScale
-        let yy = yScale
-        let zz = zScale
-        let zw = Float(1)
-        let wz = wzScale
-
-        self.init(float4(xx,  0,  0,  0),
-                  float4( 0, yy,  0,  0),
-                  float4( 0,  0, zz, zw),
-                  float4( 0,  0, wz,  1))
-    }
-
-    // left-handed LookAt
-    init(eye: float3, center: float3, up: float3) {
-        let z = normalize(center-eye)
-        let x = normalize(cross(up, z))
-        let y = cross(z, x)
-
-        let X = float4(x.x, y.x, z.x, 0)
-        let Y = float4(x.y, y.y, z.y, 0)
-        let Z = float4(x.z, y.z, z.z, 0)
-        let W = float4(-dot(x, eye), -dot(y, eye), -dot(z, eye), 1)
-
-        self.init()
-        columns = (X, Y, Z, W)
-    }
-
-    // MARK:- Orthographic matrix
-    init(orthoLeft left: Float, right: Float, bottom: Float, top: Float, near: Float, far: Float) {
-        let X = float4(2 / (right - left), 0, 0, 0)
-        let Y = float4(0, 2 / (top - bottom), 0, 0)
-        let Z = float4(0, 0, 1 / (far - near), 0)
-        let W = float4((left + right) / (left - right),
-                       (top + bottom) / (bottom - top),
-                       near / (near - far),
-                       1)
-        self.init()
-        columns = (X, Y, Z, W)
-    }
-
-    // convert double4x4 to float4x4
-    init(_ m: matrix_double4x4) {
-        self.init()
-        let matrix: float4x4 = float4x4(float4(m.columns.0),
-                                        float4(m.columns.1),
-                                        float4(m.columns.2),
-                                        float4(m.columns.3))
-        self = matrix
-    }
-}
-
-// MARK:- float3x3
-extension float3x3 {
-    init(normalFrom4x4 matrix: float4x4) {
-        self.init()
-        columns = matrix.upperLeft.inverse.transpose.columns
-    }
-}
-
-// MARK:- float4
-extension float4 {
-    var xyz: float3 {
-        get {
-            float3(x, y, z)
-        }
-        set {
-            x = newValue.x
-            y = newValue.y
-            z = newValue.z
-        }
-    }
-
-    // convert from double4
-    init(_ d: SIMD4<Double>) {
-        self.init()
-        self = [Float(d.x), Float(d.y), Float(d.z), Float(d.w)]
-    }
-}
-
-
-
-// **** Generated Functions ***** \\
-
-
-// Generic matrix math utility functions
-func matrix4x4_rotation(radians: Float, axis: SIMD3<Float>) -> matrix_float4x4 {
-    let unitAxis = normalize(axis)
-    let ct = cosf(radians)
-    let st = sinf(radians)
-    let ci = 1 - ct
-    let x = unitAxis.x, y = unitAxis.y, z = unitAxis.z
-    return matrix_float4x4.init(columns:(vector_float4(    ct + x * x * ci, y * x * ci + z * st, z * x * ci - y * st, 0),
-                                         vector_float4(x * y * ci - z * st,     ct + y * y * ci, z * y * ci + x * st, 0),
-                                         vector_float4(x * z * ci + y * st, y * z * ci - x * st,     ct + z * z * ci, 0),
-                                         vector_float4(                  0,                   0,                   0, 1)))
-}
-
-func matrix4x4_translation(_ translationX: Float, _ translationY: Float, _ translationZ: Float) -> matrix_float4x4 {
-    return matrix_float4x4.init(columns:(vector_float4(1, 0, 0, 0),
-                                         vector_float4(0, 1, 0, 0),
-                                         vector_float4(0, 0, 1, 0),
-                                         vector_float4(translationX, translationY, translationZ, 1)))
-}
-
-func matrix_perspective_right_hand(fovyRadians fovy: Float, aspectRatio: Float, nearZ: Float, farZ: Float) -> matrix_float4x4 {
-    let ys = 1 / tanf(fovy * 0.5)
-    let xs = ys / aspectRatio
-    let zs = farZ / (nearZ - farZ)
-    return matrix_float4x4.init(columns:(vector_float4(xs,  0, 0,   0),
-                                         vector_float4( 0, ys, 0,   0),
-                                         vector_float4( 0,  0, zs, -1),
-                                         vector_float4( 0,  0, zs * nearZ, 0)))
-}
-
-func radians_from_degrees(_ degrees: Float) -> Float {
-    return (degrees / 180) * .pi
 }

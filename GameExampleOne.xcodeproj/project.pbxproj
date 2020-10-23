@@ -16,6 +16,7 @@
 		024A35B3253522900015D833 /* GameExampleOneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 024A35B2253522900015D833 /* GameExampleOneTests.swift */; };
 		024A35BE253522900015D833 /* GameExampleOneUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 024A35BD253522900015D833 /* GameExampleOneUITests.swift */; };
 		024A35D825354CF10015D833 /* Shader.metal in Sources */ = {isa = PBXBuildFile; fileRef = 024A35D725354CF10015D833 /* Shader.metal */; };
+		024C38D72541DA44002A0686 /* MathLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 024C38D62541DA44002A0686 /* MathLibrary.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,6 +53,7 @@
 		024A35BF253522900015D833 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		024A35D0253547880015D833 /* GPUObjects.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GPUObjects.h; sourceTree = "<group>"; };
 		024A35D725354CF10015D833 /* Shader.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shader.metal; sourceTree = "<group>"; };
+		024C38D62541DA44002A0686 /* MathLibrary.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MathLibrary.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +104,7 @@
 		024A359A2535228F0015D833 /* GameExampleOne */ = {
 			isa = PBXGroup;
 			children = (
+				024C38D62541DA44002A0686 /* MathLibrary.swift */,
 				024A359B2535228F0015D833 /* AppDelegate.swift */,
 				024A359D2535228F0015D833 /* SceneDelegate.swift */,
 				024A359F2535228F0015D833 /* ViewController.swift */,
@@ -267,6 +270,7 @@
 				024A35A02535228F0015D833 /* ViewController.swift in Sources */,
 				024A359C2535228F0015D833 /* AppDelegate.swift in Sources */,
 				024A359E2535228F0015D833 /* SceneDelegate.swift in Sources */,
+				024C38D72541DA44002A0686 /* MathLibrary.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
