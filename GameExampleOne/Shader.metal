@@ -28,6 +28,8 @@ vertex VertexOut vertex_main(uint vertexID [[ vertex_id ]],
     vector_float2 viewportSize = vector_float2(*viewportSizePointer);
 
     out.position = float4(0.0, 0.0, 0.0, 1.0);
+    
+    
     out.position.xy = pixelSpacePosition / (viewportSize / 2.0);
 
     out.textureCoordinate = text.textureCoordinate;
