@@ -178,47 +178,56 @@ class ViewController: UIViewController {
             if origin.y + boundingRect.maxY > maxYCoordForLine {
                 maxYCoordForLine = origin.y + boundingRect.maxY;
             }
-
+            
+            // Calculated origin of the glyph inside the atlas
             let glyphOriginX: CGFloat = origin.x - boundingRect.origin.x + (glyphMargin * 0.5);
             let glyphOriginY: CGFloat = origin.y + (glyphMargin * 0.5);
 
-            // gotta look up what this is doing...
+            // 3x3 matrix represents scale, rotation & translation
+            
+//             [1,             0,           0]
+//             [0,            -1,           0] -> -1 Value flips the glyph right side up
+//             [glyphOriginX, glyphOriginY, 1]
+            
+//             glyphOrigins represent the translation of the glyph
+            
+//            Apple Doc
+//            The rightmost column of the matrix always contains the constant values 0, 0, 1. Mathematically, this third column is required to allow                   concatenation
             var glyphTransform: CGAffineTransform = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: glyphOriginX, ty: glyphOriginY)
 
+            // Create the path for the character
             guard let path: CGPath = CTFontCreatePathForGlyph(ctFont, glyph, &glyphTransform) else {
                 // In order to keep the correct index of glyphs, we need to add placeholder glyphs with fonts with empty spaces. aka spaces
                 mutableGlyphs.append(.empty)
                 return
             }
 
+            // Draw!
             context.addPath(path)
             context.fillPath()
 
             var glyphPathBoundingRect = path.boundingBoxOfPath
 
             // The null rect (i.e., the bounding rect of an empty path) is problematic
-                // because it has its origin at (+inf, +inf); we fix that up here
-            if glyphPathBoundingRect.equalTo(.null)
-                {
-                    glyphPathBoundingRect = .zero;
-                }
+            // So we just set it to zero here
+            if glyphPathBoundingRect.equalTo(.null) {
+                glyphPathBoundingRect = .zero;
+            }
 
 
-            // this creates coords between 0 & 1 for the texture
+            // Texture coordinates are beetween 0 & 1
+            // This transforms the glyph coords
             let texCoordLeft = glyphPathBoundingRect.origin.x / atlasSize;
             let texCoordRight = (glyphPathBoundingRect.origin.x + glyphPathBoundingRect.size.width) / atlasSize;
             let texCoordTop = (glyphPathBoundingRect.origin.y) / atlasSize;
             let texCoordBottom = (glyphPathBoundingRect.origin.y + glyphPathBoundingRect.size.height) / atlasSize;
 
             // add glyphDescriptors
-            // Not sure if needed if not doing signed-distance field
-
             let validGlyph: GlyphDescriptor = .valid(ValidGlyphDescriptor(glyphIndex: glyph,
                                                                           topLeftTexCoord: CGPoint(x: texCoordLeft,
                                                                                                    y: texCoordTop),
                                                                           bottomRightTexCoord: CGPoint(x: texCoordRight,
                                                                                                        y: texCoordBottom), yOrigin: origin.y))
-
             mutableGlyphs.append(validGlyph)
 
             origin.x += boundingRect.width + glyphMargin;
